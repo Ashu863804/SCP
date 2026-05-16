@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv/
+venv/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (large — use Kaggle Input, do not commit)
+data/
+ham10000_organized/
+/kaggle/
+
+# Training outputs (regenerate on Kaggle or locally)
+outputs/models/*.h5
+outputs/models/*.keras
+outputs/plots/*
+outputs/reports/*
+!outputs/models/.gitkeep
+!outputs/plots/.gitkeep
+!outputs/reports/.gitkeep
+
+# Logs
+*.log
+wandb/
+
+# Original standalone notebook (optional local copy)
+phase-2-efficientnetb0*.ipynb
