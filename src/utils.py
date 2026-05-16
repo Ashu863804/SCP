@@ -118,22 +118,37 @@ def plot_confusion_matrix(
     save_path: Path | None = None,
     show: bool = True,
     title: str = "Confusion Matrix — EfficientNet",
+    normalize: bool = False,
 ) -> np.ndarray:
-    """Draw and optionally save a confusion matrix heatmap."""
+    """Draw and optionally save a confusion matrix heatmap (counts or normalized)."""
     cm = confusion_matrix(y_true, y_pred)
+    display = cm.astype(float)
+    if normalize:
+        row_sums = display.sum(axis=1, keepdims=True)
+        display = np.divide(
+            display,
+            row_sums,
+            out=np.zeros_like(display),
+            where=row_sums != 0,
+        )
+        fmt = ".2f"
+        plot_title = title + " (normalized)"
+    else:
+        fmt = "d"
+        plot_title = title
 
     plt.figure(figsize=(10, 8))
     sns.heatmap(
-        cm,
+        display,
         annot=True,
-        fmt="d",
+        fmt=fmt,
         cmap="Blues",
         xticklabels=class_names,
         yticklabels=class_names,
     )
     plt.xlabel("Predicted")
     plt.ylabel("Actual")
-    plt.title(title)
+    plt.title(plot_title)
     plt.tight_layout()
 
     if save_path is not None:
@@ -145,6 +160,22 @@ def plot_confusion_matrix(
         plt.close()
 
     return cm
+
+
+def merge_histories(*histories: Any) -> Any:
+    """Concatenate Keras History objects for plotting multi-phase training."""
+    if not histories:
+        raise ValueError("At least one history is required")
+
+    merged: dict[str, list] = {}
+    for history in histories:
+        for key, values in history.history.items():
+            merged.setdefault(key, []).extend(values)
+
+    class _MergedHistory:
+        history = merged
+
+    return _MergedHistory()
 
 
 def plot_sample_predictions(

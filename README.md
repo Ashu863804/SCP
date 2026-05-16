@@ -57,7 +57,22 @@ Cursor IDE  →  GitHub (Ashu863804/SCP)  →  Kaggle notebook SCP01  →  clone
    git clone https://github.com/Ashu863804/SCP.git /kaggle/working/SCP
    ```
 7. Confirm output: `src exists: True`.
-8. Run remaining cells (config → dataset → train → evaluate).
+8. In the **config cell**, set `FORCE_REORGANIZE = True` for the **first** Phase 2b run (rebuilds data folders).
+9. Run all cells (config → dataset → train → fine-tune → evaluate).
+10. After a successful run, set `FORCE_REORGANIZE = False` to skip re-copying images on the next session.
+
+### Phase 2b (mel / akiec / bcc recall focus)
+
+| Change | Purpose |
+|--------|---------|
+| Lesion-grouped split | Same lesion not in train and test |
+| Train oversampling | More minority-class batches |
+| Clinical class weights | Boost `mel`, `akiec`, `bcc` |
+| Stronger augmentation | Better generalization on rare classes |
+| Best-checkpoint eval | Test metrics from `best_efficientnet.h5` |
+| TTA (horizontal flip) | Slightly stabler predictions |
+
+**Compare these metrics** (not accuracy alone): `mel` / `akiec` / `bcc` **recall**, **macro F1**, **balanced accuracy** — printed in `outputs/reports/clinical_summary.txt`.
 
 **Before each Kaggle session:** push latest code from your PC:
 

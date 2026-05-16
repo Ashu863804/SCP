@@ -26,23 +26,41 @@ class TrainingConfig:
     """Hyperparameters and paths used across dataset, model, and training."""
 
     # --- Dataset (Kaggle Input) ---
-    # Slug used after adding the HAM10000 dataset to your Kaggle notebook.
     kaggle_dataset_slug: str = "ham10000-dataset"
-    # Alternate slug from the original notebook (kmader bundle).
     kaggle_dataset_slug_alt: str = "datasets/kmader/skin-cancer-mnist-ham10000"
 
-    # Organized image folders (created under Kaggle working dir or locally).
     organized_dir_name: str = "ham10000_organized"
 
     # --- Image / batch ---
     img_size: tuple[int, int] = (224, 224)
     batch_size: int = 32
-    num_classes: int = 7  # HAM10000 diagnosis labels
+    num_classes: int = 7
 
-    # --- Splits (must match original notebook) ---
+    # --- Splits ---
     test_size: float = 0.2
-    val_size: float = 0.1  # fraction of remaining train
+    val_size: float = 0.1
     random_state: int = 42
+    # Group by lesion_id so the same lesion never appears in train and test.
+    use_lesion_grouped_split: bool = True
+
+    # --- Train-only minority oversampling (folder copies) ---
+    oversample_minority_train: bool = True
+    # Target count per minority class = min(nv_train * ratio, max_multiplier * original)
+    oversample_target_ratio: float = 0.5
+    oversample_max_multiplier: float = 3.0
+
+    # --- Class weights (mel / akiec / bcc focus) ---
+    class_weight_power: float = 1.0
+    clinical_boost_classes: tuple[str, ...] = ("mel", "akiec", "bcc")
+    clinical_boost_factor: float = 1.5
+
+    # --- Augmentation ---
+    use_strong_augmentation: bool = True
+    rotation_range: int = 20
+    zoom_range: float = 0.2
+    width_shift_range: float = 0.1
+    height_shift_range: float = 0.1
+    brightness_range: tuple[float, float] = (0.8, 1.2)
 
     # --- Model head ---
     dense_units: int = 256
@@ -50,24 +68,33 @@ class TrainingConfig:
     label_smoothing: float = 0.1
     learning_rate: float = 3e-5
     fine_tune_learning_rate: float = 1e-5
-    fine_tune_unfreeze_last_n: int = 40
+    fine_tune_head_lr: float = 1e-4
+    use_discriminative_lr: bool = True
+    fine_tune_unfreeze_last_n: int = 60
 
     # --- Training ---
     epochs: int = 15
-    fine_tune_epochs: int = 10
-    class_weight_power: float = 0.5  # smooth balanced class weights
+    fine_tune_epochs: int = 15
 
     # --- Callbacks ---
     early_stopping_patience: int = 5
     reduce_lr_patience: int = 3
     reduce_lr_factor: float = 0.3
+    checkpoint_monitor: str = "val_loss"
+    checkpoint_mode: str = "min"
+
+    # --- Evaluation ---
+    use_tta: bool = True
+    clinical_classes: tuple[str, ...] = ("mel", "akiec", "bcc")
 
     # --- Output filenames ---
     best_model_filename: str = "best_efficientnet.h5"
     final_model_filename: str = "efficientnet_phase2.h5"
     history_plot_filename: str = "training_history.png"
     confusion_matrix_filename: str = "confusion_matrix.png"
+    confusion_matrix_norm_filename: str = "confusion_matrix_normalized.png"
     classification_report_filename: str = "classification_report.txt"
+    clinical_summary_filename: str = "clinical_summary.txt"
 
     # Resolved at runtime
     project_root: Path = field(default_factory=_project_root)
@@ -91,7 +118,6 @@ class TrainingConfig:
         self._ensure_output_dirs()
 
     def _setup_local_paths(self) -> None:
-        # Local dev: optional data folder + standard outputs under repo root.
         env_input = os.environ.get("HAM10000_INPUT_DIR")
         if env_input:
             self.kaggle_input_dir = Path(env_input)
@@ -110,7 +136,6 @@ class TrainingConfig:
         self._ensure_output_dirs()
 
     def _resolve_kaggle_input(self) -> Path:
-        """Pick the first existing Kaggle input path for HAM10000."""
         candidates = [
             Path("/kaggle/input") / self.kaggle_dataset_slug,
             Path("/kaggle/input") / self.kaggle_dataset_slug_alt,
@@ -119,7 +144,6 @@ class TrainingConfig:
         for path in candidates:
             if path.exists():
                 return path
-        # Default — user must attach the dataset with this slug.
         return Path("/kaggle/input") / self.kaggle_dataset_slug
 
     def _ensure_output_dirs(self) -> None:
@@ -171,11 +195,21 @@ class TrainingConfig:
         return self.plots_dir / self.confusion_matrix_filename
 
     @property
+    def confusion_matrix_norm_path(self) -> Path:
+        assert self.plots_dir is not None
+        return self.plots_dir / self.confusion_matrix_norm_filename
+
+    @property
     def classification_report_path(self) -> Path:
         assert self.reports_dir is not None
         return self.reports_dir / self.classification_report_filename
 
+    @property
+    def clinical_summary_path(self) -> Path:
+        assert self.reports_dir is not None
+        return self.reports_dir / self.clinical_summary_filename
+
 
 def get_config() -> TrainingConfig:
-    """Return a fresh configuration instance."""
+    """Return a fresh configuration instance (Phase 2b mel-recall defaults)."""
     return TrainingConfig()
