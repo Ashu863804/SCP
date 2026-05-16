@@ -14,35 +14,69 @@ import seaborn as sns
 from sklearn.metrics import confusion_matrix
 
 
-def add_src_to_path() -> Path:
+def find_project_root() -> Path:
     """
-    Add the project ``src`` package to ``sys.path``.
+    Find the repository root (folder that contains ``src/config.py``).
 
-    Use at the top of Kaggle notebooks after cloning the GitHub repo into
-    ``/kaggle/working/skin-cancer-detection``.
+    Checks common Kaggle layouts: cloned repo, flat working copy, or
+    read-only copy under ``/kaggle/input``.
     """
     here = Path(__file__).resolve().parent.parent
-    candidates = [
-        Path("/kaggle/working/skin-cancer-detection"),
+    candidates: list[Path] = [
+        Path("/kaggle/working/SCP"),
+        Path("/kaggle/working/SCP/skin-cancer-detection"),
+        Path("/kaggle/working"),
+        here,
         Path.cwd(),
         Path.cwd().parent,
-        here,
     ]
-    seen: set[str] = set()
+
+    # Parent folders of the current notebook working directory
+    candidates.extend(list(Path.cwd().parents)[:6])
+
+    # Datasets attached under /kaggle/input (e.g. GitHub repo as Kaggle dataset)
+    kaggle_input = Path("/kaggle/input")
+    if kaggle_input.is_dir():
+        for child in sorted(kaggle_input.iterdir()):
+            candidates.append(child)
+
+    checked: set[Path] = set()
     for root in candidates:
-        root = root.resolve()
-        src = root / "src"
-        if (src / "config.py").exists():
-            root_str = str(root)
-            if root_str not in sys.path:
-                sys.path.insert(0, root_str)
-            if root_str not in seen:
-                seen.add(root_str)
+        try:
+            root = root.resolve()
+        except OSError:
+            continue
+        if root in checked:
+            continue
+        checked.add(root)
+        if (root / "src" / "config.py").is_file():
             return root
+
     raise FileNotFoundError(
-        "Could not locate project src/. Clone the repo into /kaggle/working "
-        "or run the notebook from the repository root."
+        "Could not find src/config.py.\n"
+        "On Kaggle, run in a prior cell:\n"
+        "  !git clone https://github.com/Ashu863804/SCP.git /kaggle/working/SCP\n"
+        "Then restart the kernel and run this notebook again."
     )
+
+
+def add_src_to_path(chdir: bool = True) -> Path:
+    """
+    Add the project root to ``sys.path`` so ``import src...`` works.
+
+    Args:
+        chdir: If True, change the process cwd to the project root (recommended
+            on Kaggle so outputs land in a predictable place).
+    """
+    root = find_project_root()
+    root_str = str(root)
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+    if chdir:
+        import os
+
+        os.chdir(root)
+    return root
 
 
 def plot_training_history(

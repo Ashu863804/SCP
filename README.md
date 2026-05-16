@@ -37,16 +37,46 @@ skin-cancer-detection/
 ## Workflow overview
 
 ```text
-Cursor IDE  →  local repo  →  GitHub  →  Kaggle (import repo)  →  GPU notebook  →  src/
+Cursor IDE  →  GitHub (Ashu863804/SCP)  →  Kaggle notebook SCP01  →  clone + src/
 ```
+
+**Repository:** https://github.com/Ashu863804/SCP
+
+---
+
+## Kaggle notebook **SCP01** (step-by-step)
+
+1. Open your Kaggle notebook **SCP01**.
+2. **Settings** → **Accelerator** → **GPU** (T4).
+3. **Add Data** → add **HAM10000** (e.g. *Skin Cancer MNIST: HAM10000* by kmader).
+4. **Internet** → **On** (required for `git clone`).
+5. Copy cells from `notebooks/phase2_training.ipynb` into SCP01, **or** run that file after clone.
+6. Run **cell 1** — it always runs:
+   ```bash
+   rm -rf /kaggle/working/SCP
+   git clone https://github.com/Ashu863804/SCP.git /kaggle/working/SCP
+   ```
+7. Confirm output: `src exists: True`.
+8. Run remaining cells (config → dataset → train → evaluate).
+
+**Before each Kaggle session:** push latest code from your PC:
+
+```bash
+cd skin-cancer-detection
+git add .
+git commit -m "your message"
+git push origin main
+```
+
+Then re-run SCP01 cell 1 on Kaggle to pull the fresh clone.
 
 ---
 
 ## 1. Clone and develop locally (Cursor)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/skin-cancer-detection.git
-cd skin-cancer-detection
+git clone https://github.com/Ashu863804/SCP.git
+cd SCP
 python -m venv .venv
 # Windows
 .venv\Scripts\activate
@@ -70,13 +100,12 @@ Open `notebooks/phase2_training.ipynb` in Cursor and run cells (CPU is fine for 
 
 ```bash
 cd skin-cancer-detection
-git init
 git add .
 git commit -m "Phase 2: modular EfficientNetB0 HAM10000 pipeline"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/skin-cancer-detection.git
-git push -u origin main
+git push origin main
 ```
+
+Remote should be: `https://github.com/Ashu863804/SCP.git`
 
 Do **not** commit raw images or large `.h5` weights (see `.gitignore`).
 
@@ -90,16 +119,19 @@ Do **not** commit raw images or large `.h5` weights (see `.gitignore`).
 2. **Settings** → turn **GPU** on (e.g. T4).
 3. **Add Data** → search **HAM10000** (e.g. *Skin Cancer MNIST: HAM10000* by kmader) and add it to the notebook.
 
-### B. Import this GitHub repo
-
-In the first notebook cell (or **Settings → Git**), link your repository, **or** clone in a setup cell:
+### B. Clone repo on Kaggle (SCP01 cell 1)
 
 ```python
-!git clone https://github.com/YOUR_USERNAME/skin-cancer-detection.git /kaggle/working/skin-cancer-detection
+!rm -rf /kaggle/working/SCP
+!git clone https://github.com/Ashu863804/SCP.git /kaggle/working/SCP
 ```
 
-### C. Run `notebooks/phase2_training.ipynb`
+Turn **Internet ON** in notebook settings.
 
+### C. Run training cells
+
+- Cell 1 clones to `/kaggle/working/SCP` and adds it to `sys.path` before any `import src`.
+- If you see `ModuleNotFoundError: No module named 'src'`, run cell 1 again and check `src exists: True`.
 - Open the notebook from the cloned repo, or copy its cells into your Kaggle notebook.
 - The notebook calls `src/` modules; no large training logic lives in the notebook itself.
 - Organized images are written to `/kaggle/working/ham10000_organized/`.
