@@ -1,5 +1,10 @@
 """
 Model evaluation: best checkpoint, TTA, clinical metrics, and reports.
+
+Phase A change:
+  A5 — predict_test_set now accepts test_generators_tta as a list of generators
+       (one per TTA augmentation pass beyond the original).  Predictions from
+       all passes are averaged, yielding up to 4-pass TTA when tta_passes=4.
 """
 
 from __future__ import annotations
@@ -34,22 +39,40 @@ def load_best_model(config: TrainingConfig) -> tf.keras.Model:
 def predict_test_set(
     model: tf.keras.Model,
     test_generator: tf.keras.utils.Sequence,
-    test_generator_tta: tf.keras.utils.Sequence | None = None,
+    test_generators_tta: list[tf.keras.utils.Sequence] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Run inference on the test set; optional TTA via flipped second pass.
+    Run inference on the test set with optional multi-pass TTA.
+
+    A5: test_generators_tta is now a list of augmented generators (h-flip,
+    v-flip, h+v-flip).  Predictions from the original pass and all TTA passes
+    are accumulated and averaged, giving up to 4-pass TTA.
+
+    Args:
+        model:               Compiled Keras model.
+        test_generator:      Plain (no augmentation) test generator — pass 1.
+        test_generators_tta: List of augmented generators for passes 2-N,
+                             or None / empty list to disable TTA.
 
     Returns:
-        y_true, y_pred (class indices), y_prob (softmax probabilities)
+        y_true   — ground-truth class indices
+        y_pred   — argmax predicted class indices
+        y_prob   — averaged softmax probability array (n_samples × n_classes)
     """
     test_generator.reset()
-    y_prob = model.predict(test_generator, verbose=1)
+    y_prob = model.predict(test_generator, verbose=1).astype(np.float64)
+    n_passes = 1
 
-    if test_generator_tta is not None:
-        test_generator_tta.reset()
-        y_prob_flip = model.predict(test_generator_tta, verbose=1)
-        y_prob = (y_prob + y_prob_flip) / 2.0
-        print("TTA: averaged original + horizontal-flip predictions")
+    if test_generators_tta:
+        for tta_gen in test_generators_tta:
+            tta_gen.reset()
+            y_prob += model.predict(tta_gen, verbose=0).astype(np.float64)
+            n_passes += 1
+        y_prob /= n_passes
+        print(
+            f"TTA: averaged {n_passes} passes "
+            f"(original + {n_passes - 1} augmented)"
+        )
 
     y_pred = np.argmax(y_prob, axis=1)
     y_true = test_generator.classes
@@ -107,21 +130,24 @@ def evaluate_model(
     test_generator: tf.keras.utils.Sequence,
     class_names: list[str],
     config: TrainingConfig | None = None,
-    test_generator_tta: tf.keras.utils.Sequence | None = None,
+    test_generators_tta: list[tf.keras.utils.Sequence] | None = None,
     verbose: bool = True,
 ) -> dict:
     """
     Full test evaluation with imbalance-aware metrics and clinical summary.
+
+    A5: test_generators_tta is a list of augmented generators (or None / empty
+    list to skip TTA).
     """
     if config is None:
         from src.config import get_config
 
         config = get_config()
 
-    use_tta = config.use_tta and test_generator_tta is not None
-    tta_gen = test_generator_tta if use_tta else None
+    # Only use TTA if enabled in config AND generators were supplied.
+    tta_gens = test_generators_tta if (config.use_tta and test_generators_tta) else None
 
-    y_true, y_pred, y_prob = predict_test_set(model, test_generator, tta_gen)
+    y_true, y_pred, y_prob = predict_test_set(model, test_generator, tta_gens)
     report = generate_classification_report(y_true, y_pred, class_names)
 
     accuracy = float(np.mean(y_true == y_pred))
@@ -152,17 +178,20 @@ def evaluate_best_checkpoint(
     test_generator: tf.keras.utils.Sequence,
     class_names: list[str],
     config: TrainingConfig,
-    test_generator_tta: tf.keras.utils.Sequence | None = None,
+    test_generators_tta: list[tf.keras.utils.Sequence] | None = None,
     verbose: bool = True,
 ) -> dict:
-    """Load best_efficientnet.h5 and run full evaluation."""
+    """Load best_efficientnet.h5 and run full evaluation.
+
+    A5: test_generators_tta is a list of TTA generators (or None to skip TTA).
+    """
     model = load_best_model(config)
     return evaluate_model(
         model,
         test_generator,
         class_names,
         config=config,
-        test_generator_tta=test_generator_tta,
+        test_generators_tta=test_generators_tta,
         verbose=verbose,
     )
 

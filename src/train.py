@@ -1,5 +1,12 @@
 """
-Training loop, callbacks, and fine-tuning with optional discriminative learning rates.
+Training loop, callbacks, and fine-tuning.
+
+Phase A changes:
+  A1 — compile_fine_tune_model no longer attempts list-based Adam LR (Keras doesn't
+       support per-variable learning rates via Adam(learning_rate=list[float])).
+       The broken try/except fallback is removed; a clean single-LR compile is used.
+  A2 — fine_tune_label_smoothing (0.0) is used during fine-tuning so minority-class
+       gradients are not diluted in the final training phase.
 """
 
 from __future__ import annotations
@@ -69,46 +76,26 @@ def compile_fine_tune_model(
     config: TrainingConfig,
 ) -> tf.keras.Model:
     """
-    Compile for fine-tuning with one LR or per-variable discriminative LRs.
+    Compile the model for fine-tuning.
+
+    A1: Uses a single Adam LR (fine_tune_learning_rate) for the whole model.
+        Per-variable LR via Adam(learning_rate=list) is not supported by
+        tf.keras — attempting it silently falls back to a scalar and was
+        therefore removed.
+    A2: Uses fine_tune_label_smoothing (default 0.0) so minority-class
+        gradient signal is not diluted during the critical fine-tune phase.
     """
     from src.model import compile_model
 
-    if not config.use_discriminative_lr:
-        return compile_model(
-            model,
-            learning_rate=config.fine_tune_learning_rate,
-            label_smoothing=config.label_smoothing,
-        )
-
-    learning_rates: list[float] = []
-    for var in model.trainable_variables:
-        name = var.name.lower()
-        if "efficientnet" in name:
-            learning_rates.append(config.fine_tune_learning_rate)
-        else:
-            learning_rates.append(config.fine_tune_head_lr)
-
-    try:
-        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rates)
-        model.compile(
-            optimizer=optimizer,
-            loss=tf.keras.losses.CategoricalCrossentropy(
-                label_smoothing=config.label_smoothing
-            ),
-            metrics=["accuracy"],
-        )
-        print(
-            "Fine-tune compile: discriminative LR "
-            f"(backbone={config.fine_tune_learning_rate}, "
-            f"head={config.fine_tune_head_lr})"
-        )
-    except (TypeError, ValueError) as exc:
-        print(f"Discriminative LR not supported ({exc}); using single LR.")
-        compile_model(
-            model,
-            learning_rate=config.fine_tune_learning_rate,
-            label_smoothing=config.label_smoothing,
-        )
+    compile_model(
+        model,
+        learning_rate=config.fine_tune_learning_rate,
+        label_smoothing=config.fine_tune_label_smoothing,
+    )
+    print(
+        f"Fine-tune compile: LR={config.fine_tune_learning_rate}, "
+        f"label_smoothing={config.fine_tune_label_smoothing}"
+    )
     return model
 
 

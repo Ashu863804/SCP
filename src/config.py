@@ -3,6 +3,12 @@ Central configuration for HAM10000 multiclass training.
 
 Paths default to Kaggle Input / Working directories. Override with environment
 variables when running locally (see README).
+
+Phase A changes (from roadmap):
+  A2 — frozen_phase_label_smoothing / fine_tune_label_smoothing replace label_smoothing
+  A3 — vertical_flip added to augmentation block
+  A4 — min_test_samples_per_class controls split-quality warning threshold
+  A5 — tta_passes controls how many TTA augmentation passes are generated
 """
 
 from __future__ import annotations
@@ -61,15 +67,21 @@ class TrainingConfig:
     width_shift_range: float = 0.1
     height_shift_range: float = 0.1
     brightness_range: tuple[float, float] = (0.8, 1.2)
+    # A3: dermoscopy lesions have no fixed orientation — vertical flip is always valid.
+    vertical_flip: bool = True
 
     # --- Model head ---
     dense_units: int = 256
     dropout_rate: float = 0.5
-    label_smoothing: float = 0.1
+    # A2: phase-specific label smoothing.
+    #     Frozen phase: mild smoothing (0.05) keeps some regularisation.
+    #     Fine-tune phase: no smoothing (0.0) so minority-class gradients are not diluted.
+    frozen_phase_label_smoothing: float = 0.05
+    fine_tune_label_smoothing: float = 0.0
     learning_rate: float = 3e-5
     fine_tune_learning_rate: float = 1e-5
-    fine_tune_head_lr: float = 1e-4
-    use_discriminative_lr: bool = True
+    # A1: discriminative per-variable LR is NOT supported by tf.keras.optimizers.Adam.
+    #     Removed use_discriminative_lr / fine_tune_head_lr to prevent silent fallback bugs.
     fine_tune_unfreeze_last_n: int = 60
 
     # --- Training ---
@@ -83,8 +95,14 @@ class TrainingConfig:
     checkpoint_monitor: str = "val_loss"
     checkpoint_mode: str = "min"
 
-    # --- Evaluation ---
+    # --- Split quality ---
+    # A4: warn if any class has fewer than this many samples in val or test.
+    min_test_samples_per_class: int = 10
+
+    # --- Evaluation / TTA ---
     use_tta: bool = True
+    # A5: total TTA passes (1 = no TTA; 4 = original + h-flip + v-flip + h+v-flip).
+    tta_passes: int = 4
     clinical_classes: tuple[str, ...] = ("mel", "akiec", "bcc")
 
     # --- Output filenames ---
@@ -211,5 +229,5 @@ class TrainingConfig:
 
 
 def get_config() -> TrainingConfig:
-    """Return a fresh configuration instance (Phase 2b mel-recall defaults)."""
+    """Return a fresh configuration instance (Phase A improvements active)."""
     return TrainingConfig()

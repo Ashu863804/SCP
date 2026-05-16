@@ -1,5 +1,13 @@
 """
 HAM10000 dataset loading, lesion-grouped splits, oversampling, and generators.
+
+Phase A changes:
+  A3 — vertical_flip added to _build_train_datagen (dermoscopy has no fixed orientation).
+  A4 — _validate_split_class_coverage warns when rare classes are underrepresented in
+       val/test so silent evaluation failures are surfaced immediately.
+  A5 — create_data_generators now produces a list of TTA generators (h-flip, v-flip,
+       h+v-flip) instead of a single h-flip generator when config.use_tta is True.
+       The list length is controlled by config.tta_passes (default 4 → 3 extra passes).
 """
 
 from __future__ import annotations
@@ -111,7 +119,59 @@ def _split_train_val_test(
         )
         print("Split method: stratified per-image")
 
+    # A4: surface class-coverage issues immediately after every split.
+    _validate_split_class_coverage(
+        train_df, val_df, test_df, config.min_test_samples_per_class
+    )
     return train_df, val_df, test_df
+
+
+def _validate_split_class_coverage(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    min_samples: int,
+) -> None:
+    """
+    A4: Print per-class counts for every split and warn about underrepresented
+    classes in val/test.  No exception is raised — the split still proceeds —
+    but an explicit WARNING is printed so the user is not surprised by
+    unreliable per-class metrics.
+    """
+    all_classes = sorted(train_df["dx"].unique())
+    print("\nSplit class coverage (images per class):")
+    for split_name, split_df in [
+        ("train", train_df),
+        ("val  ", val_df),
+        ("test ", test_df),
+    ]:
+        counts = split_df["dx"].value_counts().to_dict()
+        row = "  ".join(f"{c}={counts.get(c, 0)}" for c in all_classes)
+        print(f"  {split_name}: {row}")
+
+    issues = []
+    for split_name, split_df in [("val", val_df), ("test", test_df)]:
+        counts = split_df["dx"].value_counts()
+        for cls in all_classes:
+            n = int(counts.get(cls, 0))
+            if n < min_samples:
+                issues.append(
+                    f"  {split_name}: '{cls}' has only {n} samples "
+                    f"(threshold={min_samples})"
+                )
+
+    if issues:
+        print(
+            f"\nWARNING: Rare classes are underrepresented in eval splits "
+            f"(< {min_samples} samples). Per-class metrics will be unreliable:"
+        )
+        for issue in issues:
+            print(issue)
+    else:
+        print(
+            f"\nSplit quality OK — all classes have >= {min_samples} "
+            "samples in val and test."
+        )
 
 
 def organize_train_val_test(
@@ -207,13 +267,20 @@ def _copy_split(
 
 
 def _build_train_datagen(config: TrainingConfig) -> ImageDataGenerator:
-    """Training generator with base or stronger augmentation."""
+    """Training generator with base or stronger augmentation.
+
+    A3: vertical_flip is added because dermoscopy images are captured at any
+    orientation — there is no canonical 'top' for a skin lesion.  This doubles
+    orientation invariance at zero cost.
+    """
     preprocess = tf.keras.applications.efficientnet.preprocess_input
     kwargs: dict = {
         "preprocessing_function": preprocess,
         "rotation_range": config.rotation_range,
         "zoom_range": config.zoom_range,
         "horizontal_flip": True,
+        # A3: always enabled; dermoscopy has no fixed vertical orientation.
+        "vertical_flip": config.vertical_flip,
         "fill_mode": "nearest",
     }
     if config.use_strong_augmentation:
@@ -231,13 +298,23 @@ def create_data_generators(
     ImageDataGenerator,
     ImageDataGenerator,
     ImageDataGenerator,
-    ImageDataGenerator | None,
+    list[ImageDataGenerator],
     tf.keras.utils.Sequence,
     tf.keras.utils.Sequence,
     tf.keras.utils.Sequence,
-    tf.keras.utils.Sequence | None,
+    list[tf.keras.utils.Sequence],
 ]:
-    """Build train/val/test flows; optional TTA test flow (horizontal flip)."""
+    """Build train/val/test flows; optional 4-pass TTA test flows.
+
+    A5: When config.use_tta is True, up to (config.tta_passes - 1) additional
+    test generators are created with the following augmentations:
+      pass 1 — original (the plain test_generator, no augmentation)
+      pass 2 — horizontal flip
+      pass 3 — vertical flip
+      pass 4 — horizontal + vertical flip
+    All TTA generators are returned as a list (test_generators_tta).
+    Predictions from all passes are averaged in evaluate.py.
+    """
     preprocess = tf.keras.applications.efficientnet.preprocess_input
     target_size = config.img_size
     batch_size = config.batch_size
@@ -266,31 +343,57 @@ def create_data_generators(
         shuffle=False,
     )
 
-    test_generator_tta = None
-    test_datagen_tta = None
-    if config.use_tta:
+    # A5: build a list of TTA generators (each applies a different flip variant).
+    test_datagenS_tta: list[ImageDataGenerator] = []
+    test_generatorS_tta: list[tf.keras.utils.Sequence] = []
 
-        def preprocess_flip(image: np.ndarray) -> np.ndarray:
-            return preprocess(np.fliplr(image))
+    if config.use_tta and config.tta_passes > 1:
+        # Preprocessing functions for each TTA pass beyond the original.
+        def _preprocess_hflip(img: np.ndarray) -> np.ndarray:
+            return preprocess(np.fliplr(img))
 
-        test_datagen_tta = ImageDataGenerator(preprocessing_function=preprocess_flip)
-        test_generator_tta = test_datagen_tta.flow_from_directory(
-            str(config.test_dir),
-            target_size=target_size,
-            batch_size=batch_size,
-            class_mode="categorical",
-            shuffle=False,
+        def _preprocess_vflip(img: np.ndarray) -> np.ndarray:
+            return preprocess(np.flipud(img))
+
+        def _preprocess_hvflip(img: np.ndarray) -> np.ndarray:
+            return preprocess(np.fliplr(np.flipud(img)))
+
+        # Map of pass-index → preprocessing function (pass 1 is original, already done).
+        tta_preprocess_fns = {
+            2: _preprocess_hflip,
+            3: _preprocess_vflip,
+            4: _preprocess_hvflip,
+        }
+
+        for pass_idx in range(2, config.tta_passes + 1):
+            if pass_idx not in tta_preprocess_fns:
+                break  # only 3 augmented passes are defined
+            fn = tta_preprocess_fns[pass_idx]
+            datagen = ImageDataGenerator(preprocessing_function=fn)
+            generator = datagen.flow_from_directory(
+                str(config.test_dir),
+                target_size=target_size,
+                batch_size=batch_size,
+                class_mode="categorical",
+                shuffle=False,
+            )
+            test_datagenS_tta.append(datagen)
+            test_generatorS_tta.append(generator)
+
+        print(
+            f"TTA: {1 + len(test_generatorS_tta)} passes "
+            f"(original + {len(test_generatorS_tta)} augmented)"
         )
 
     return (
         train_datagen,
         val_datagen,
         test_datagen,
-        test_datagen_tta,
+        test_datagenS_tta,
         train_generator,
         val_generator,
         test_generator,
-        test_generator_tta,
+        test_generatorS_tta,
     )
 
 
@@ -348,11 +451,11 @@ def prepare_dataset_pipeline(
         _train_datagen,
         _val_datagen,
         _test_datagen,
-        _test_datagen_tta,
+        _test_datagenS_tta,
         train_gen,
         val_gen,
         test_gen,
-        test_gen_tta,
+        test_genS_tta,
     ) = create_data_generators(config)
 
     class_weight_dict, clinical_weights = compute_clinical_class_weights(
@@ -365,7 +468,8 @@ def prepare_dataset_pipeline(
         "train_generator": train_gen,
         "val_generator": val_gen,
         "test_generator": test_gen,
-        "test_generator_tta": test_gen_tta,
+        # A5: now a list of TTA generators (empty list when use_tta=False).
+        "test_generators_tta": test_genS_tta,
         "class_weight_dict": class_weight_dict,
         "clinical_weights": clinical_weights,
         "class_names": class_names,

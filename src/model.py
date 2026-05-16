@@ -1,5 +1,10 @@
 """
 EfficientNetB0 transfer-learning model (frozen backbone + custom head).
+
+Phase A change:
+  A2 — create_and_compile_model now passes config.frozen_phase_label_smoothing
+       (0.05) instead of config.label_smoothing (0.1) to reduce dilution of
+       minority-class gradient signal during the frozen-backbone training phase.
 """
 
 from __future__ import annotations
@@ -81,9 +86,10 @@ def create_and_compile_model(
         config = get_config()
 
     model, base_model = build_efficientnet_model(num_classes, config=config)
+    # A2: use the frozen-phase label smoothing (default 0.05, previously 0.1).
     compile_model(
         model,
         learning_rate=config.learning_rate,
-        label_smoothing=config.label_smoothing,
+        label_smoothing=config.frozen_phase_label_smoothing,
     )
     return model, base_model
